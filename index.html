@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <script>
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyQUV5Pm4W6Ocp06swFBZbXxHMqYfncR-emzegPJBQMjuos5LHecKB2fs1ELNvNa9M/exec';
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>빈 로케이션 바코드 스캐너</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --success: #16a34a;
+      --warn: #d97706;
+      --danger: #dc2626;
+      --bg: #f3f4f6;
+      --card: #ffffff;
+      --border: #d1d5db;
+      --text: #111827;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; padding: 0 0 40px 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+
+    .tabs {
+      display: flex; position: sticky; top: 0; z-index: 20;
+      background: var(--card); border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      flex: 1; padding: 14px 8px; border: none; background: none;
+      font-size: 15px; font-weight: 700; color: #6b7280; cursor: pointer;
+      border-bottom: 3px solid transparent;
+    }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    .container { max-width: 560px; margin: 0 auto; padding: 12px; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .warn-banner {
+      background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;
+      padding: 10px 12px; border-radius: 10px; font-size: 13px;
+      margin-bottom: 10px; display: none;
+    }
+
+    .card {
+      background: var(--card); border-radius: 12px; padding: 12px;
+      margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+    .card-title {
+      font-size: 13px; font-weight: 700; color: #4b5563;
+      margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+    }
+
+    .scanner-wrap {
+      position: relative; width: 100%; min-height: 260px;
+      background: #0f172a; border-radius: 12px; overflow: hidden;
+      margin-bottom: 10px;
+    }
+    #reader { width: 100%; }
+    .laser-line {
+      position: absolute; left: 6%; right: 6%; top: 50%; height: 2px;
+      background: rgba(239, 68, 68, 0.95);
+      box-shadow: 0 0 10px 2px rgba(239, 68, 68, 0.8);
+      transform: translateY(-50%); pointer-events: none; z-index: 15;
+      display: none;
+    }
+    .scan-hud {
+      position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.82); color: #f8fafc;
+      padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;
+      white-space: nowrap; z-index: 16; pointer-events: none;
+      border: 1px solid rgba(255,255,255,0.18);
+    }
+
+    .cam-controls { display: flex; gap: 6px; margin-bottom: 10px; }
+    .btn {
+      flex: 1; padding: 12px 10px; border: none; border-radius: 9px;
+      font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    }
+    .btn-primary { background: var(--primary); }
+    .btn-dark { background: #334155; }
+    .btn-amber { background: var(--warn); }
+    .btn-green { background: var(--success); }
+    .btn-danger { background: var(--danger); }
+    .btn-outline {
+      background: #fff; color: var(--text); border: 1px solid var(--border);
+    }
+    .btn:disabled { opacity: 0.5; }
+
+    .opt-row {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 13px; color: #374151; gap: 8px; flex-wrap: wrap;
+    }
+    .opt-row label { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+
+    .row-flex { display: flex; gap: 8px; align-items: center; }
+    input[type="text"] {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+      border-radius: 8px; font-size: 14px;
+    }
+
+    .recent-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 0; border-bottom: 1px solid #f3f4f6; font-size: 14px;
+    }
+    .btn-mini {
+      padding: 5px 10px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      background: #fee2e2; color: var(--danger);
+    }
+
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.68);
+      display: none; align-items: flex-end; justify-content: center;
+      z-index: 50; padding: 12px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-sheet {
+      width: 100%; max-width: 520px; background: #fff;
+      border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      animation: slideUp 0.15s ease-out;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(24px); opacity: 0.6; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .modal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px;
+    }
+    .modal-badge {
+      display: inline-block; background: #dbeafe; color: #1d4ed8;
+      font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 20px;
+    }
+    .edit-hint { font-size: 12px; color: #6b7280; font-weight: 600; }
+
+    .modal-code-input {
+      width: 100% !important;
+      background: #0f172a; color: #38bdf8;
+      border: 2px solid #38bdf8 !important; border-radius: 12px !important;
+      padding: 13px 10px !important; text-align: center;
+      font-size: 25px !important; font-weight: 900; letter-spacing: 1px;
+      text-transform: uppercase; margin-bottom: 10px;
+    }
+    .modal-code-input:focus { outline: none; border-color: #60a5fa !important; }
+
+    .nudge-row {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 10px;
+    }
+    .nudge-label { font-size: 12px; font-weight: 700; color: #4b5563; white-space: nowrap; }
+    .nudge-btn {
+      flex: 1; padding: 8px 6px; border: 1px solid var(--border); border-radius: 8px;
+      background: #f8fafc; font-size: 13px; font-weight: 800; color: #1e293b; cursor: pointer;
+    }
+    .nudge-btn:active { background: #e2e8f0; }
+
+    .tier-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 12px;
+    }
+    .tier-btn {
+      padding: 10px 0; border: 1px solid var(--border); border-radius: 8px;
+      background: #f9fafb; font-size: 14px; font-weight: 800; cursor: pointer;
+    }
+    .tier-btn.selected {
+      background: var(--primary); color: #fff; border-color: var(--primary);
+    }
+
+    .chip-wrap { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .chip {
+      padding: 6px 10px; border-radius: 20px; border: 1px solid var(--border);
+      background: #f9fafb; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .chip.active { background: #dbeafe; border-color: var(--primary); color: #1d4ed8; }
+
+    .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .toolbar .btn { padding: 10px 6px; font-size: 13px; min-width: 90px; }
+    .filter-scroll {
+      display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px;
+    }
+    .filter-pill {
+      white-space: nowrap; padding: 6px 12px; border-radius: 20px;
+      border: 1px solid var(--border); background: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .filter-pill.active { background: #1e293b; color: #fff; border-color: #1e293b; }
+
+    .loc-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px; background: #fff; border-radius: 10px; margin-bottom: 8px;
+      border-left: 5px solid var(--success); box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .loc-item.reserved { border-left-color: var(--warn); background: #fffbeb; }
+    .loc-chk { width: 20px; height: 20px; accent-color: var(--primary); }
+    .loc-info { flex: 1; }
+    .loc-code { font-size: 16px; font-weight: 800; }
+    .loc-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .badge {
+      display: inline-block; padding: 2px 7px; border-radius: 4px;
+      font-size: 11px; font-weight: 700; margin-left: 6px;
+    }
+    .badge-empty { background: #dcfce7; color: #166534; }
+    .badge-res { background: #fef3c7; color: #92400e; }
+
+    #toast {
+      position: fixed; top: 62px; left: 50%; transform: translateX(-50%);
+      background: rgba(17,24,39,0.93); color: #fff; padding: 10px 18px;
+      border-radius: 24px; font-size: 14px; font-weight: 600;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 100;
+      white-space: nowrap;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('scan')">📷 바코드 스캔</button>
+    <button class="tab-btn" onclick="switchTab('list')">📋 입고 현황 (<span id="totalBadge">0</span>)</button>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- 탭 1: 1회 즉시 스캔 -->
+  <div id="sec-scan" class="container section active">
+    <div id="urlWarn" class="warn-banner">
+      ⚠️ 7번째 줄의 <strong>GAS_API_URL</strong>에 배포한 Google Apps Script 웹 앱 주소를 입력해 주세요.
+    </div>
+
+    <div class="scanner-wrap">
+      <div id="reader"></div>
+      <div id="laserLine" class="laser-line"></div>
+      <div id="scanHud" class="scan-hud">카메라 켜기를 눌러 스캔을 시작하세요</div>
+    </div>
+
+    <div class="cam-controls">
+      <button id="btnCamToggle" class="btn btn-primary" onclick="toggleCamera()">📷 카메라 켜기</button>
+      <button id="btnTorch" class="btn btn-dark" style="display:none; flex:0.55;" onclick="toggleTorch()">🔦 플래시</button>
+      <button id="btnZoom" class="btn btn-dark" style="display:none; flex:0.5;" onclick="toggleZoom()">🔍 1x</button>
+    </div>
+
+    <div class="card">
+      <div class="opt-row" style="margin-bottom:8px;">
+        <label>
+          <input type="checkbox" id="chkStrictFormat" checked>
+          로케이션 형식만 인식 (박스 바코드 무시)
+        </label>
+      </div>
+      <div class="row-flex">
+        <input type="text" id="workerName" placeholder="작업자 이름 (자동저장)" onchange="saveWorker()">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">바코드 훼손 시 직접 입력</div>
+      <div class="row-flex">
+        <input type="text" id="manualCode" placeholder="예: 3F-G01-12-04" style="text-transform:uppercase;">
+        <button class="btn btn-dark" style="flex:0.35; padding:10px;" onclick="openManualConfirm()">확인</button>
+      </div>
+    </div>
+
+    <div class="card" id="recentCard" style="display:none;">
+      <div class="card-title">방금 등록한 내역 (실수 시 바로 취소)</div>
+      <div id="recentList"></div>
+    </div>
+  </div>
+
+  <!-- 탭 2: 입고 현황 및 엑셀 복사 -->
+  <div id="sec-list" class="container section">
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="copySelected()">📋 선택 복사</button>
+      <button class="btn btn-amber" onclick="batchUpdate('선점중')">🏷️ 선점</button>
+      <button class="btn btn-green" onclick="batchUpdate('입고완료')">✅ 입고완료</button>
+      <button class="btn btn-dark" style="flex:0.35; min-width:52px;" onclick="loadList()">🔄</button>
+    </div>
+
+    <div class="filter-scroll" id="gFilterBar"></div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding:0 4px;">
+      <label style="font-size:13px; font-weight:700; display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="chkAll" class="loc-chk" onchange="toggleAllChk(this.checked)"> 전체 선택
+      </label>
+      <span id="listCountText" style="font-size:13px; color:#4b5563;">총 0건</span>
+    </div>
+
+    <div id="locListContainer">불러오는 중...</div>
+  </div>
+
+  <!-- 스캔 즉시 확인 및 수정 모달 -->
+  <div id="confirmModal" class="modal-backdrop">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <span class="modal-badge">스캔 인식 완료</span>
+        <span class="edit-hint">✏️ 코드 터치 시 직접 수정</span>
+      </div>
+
+      <input type="text" id="modalCodeInput" class="modal-code-input"
+             oninput="syncQuickButtonsFromInput()"
+             autocomplete="off" autocapitalize="characters" spellcheck="false">
+
+      <div id="quickFixWrap">
+        <div class="nudge-row">
+          <span class="nudge-label">번호 보정</span>
+          <button type="button" class="nudge-btn" onclick="nudgeBay(-1)">◀ -1</button>
+          <button type="button" class="nudge-btn" onclick="nudgeBay(1)">+1 ▶</button>
+        </div>
+        <div class="card-title" style="margin-bottom:6px;">
+          <span>단 보정 (01~07단)</span>
+          <span style="color:#6b7280; font-weight:500;">터치 시 즉시 반영</span>
+        </div>
+        <div class="tier-grid" id="modalTierGrid"></div>
+      </div>
+
+      <div class="chip-wrap" id="memoChips">
+        <span class="chip" onclick="toggleMemo(this, '파렛트 1단')">파렛트 1단</span>
+        <span class="chip" onclick="toggleMemo(this, '파렛트 2단')">파렛트 2단</span>
+        <span class="chip" onclick="toggleMemo(this, '소형/박스')">소형/박스</span>
+        <span class="chip" onclick="toggleMemo(this, '높이낮음')">높이낮음</span>
+      </div>
+      <input type="text" id="modalMemo" placeholder="추가 메모 (선택)" style="margin-bottom:14px;">
+
+      <div class="row-flex">
+        <button class="btn btn-outline" style="flex:0.45;" onclick="closeModal()">취소 / 재스캔</button>
+        <button id="btnConfirmSubmit" class="btn btn-primary" onclick="submitConfirmedCode()">빈자리 등록</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const LOCATION_REGEX = /^[0-9A-Z]+-[A-Z]+\d+-\d+-\d+$/i;
+    const MAX_TIERS = 7;
+
+    let html5QrCode = null;
+    let isScanning = false;
+    let isModalOpen = false;
+    let isTorchOn = false;
+    let isZoomed = false;
+    let audioCtx = null;
+
+    let recentCodes = [];
+    let allData = [];
+    let filterG = 'ALL';
+
+    window.onload = function() {
+      if (!GAS_API_URL || GAS_API_URL.includes('여기에_')) {
+        document.getElementById('urlWarn').style.display = 'block';
+      }
+      const savedWorker = localStorage.getItem('wms_worker_name');
+      if (savedWorker) document.getElementById('workerName').value = savedWorker;
+      initTierButtons();
+      loadList();
+    };
+
+    function initTierButtons() {
+      const grid = document.getElementById('modalTierGrid');
+      let html = '';
+      for (let i = 1; i <= MAX_TIERS; i++) {
+        const t = String(i).padStart(2, '0');
+        html += `<button type="button" class="tier-btn" data-tier="${t}" onclick="changeTier('${t}')">${t}</button>`;
+      }
+      grid.innerHTML = html;
+    }
+
+    function saveWorker() {
+      localStorage.setItem('wms_worker_name', document.getElementById('workerName').value.trim());
+    }
+
+    function initAudio() {
+      try {
+        if (!audioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) audioCtx = new AC();
+        }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (e) {}
+    }
+
+    function playBeep(freq = 1350, duration = 0.09) {
+      try {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.value = 0.12;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    async function
