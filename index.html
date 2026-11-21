@@ -1,13 +1,15 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" translate="no">
 <head>
   <meta charset="UTF-8">
-  <script>
-    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyQUV5Pm4W6Ocp06swFBZbXxHMqYfncR-emzegPJBQMjuos5LHecKB2fs1ELNvNa9M/exec';
-  </script>
+  <meta name="google" content="notranslate">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>빈 로케이션 바코드 스캐너</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    // Google Apps Script 웹 앱 URL
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyQUV5Pm4W6Ocp06swFBZbXxHMqYfncR-emzegPJBQMjuos5LHecKB2fs1ELNvNa9M/exec';
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
   <style>
     :root {
       --primary: #2563eb;
@@ -41,10 +43,10 @@
     .section { display: none; }
     .section.active { display: block; }
 
-    .warn-banner {
-      background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;
-      padding: 10px 12px; border-radius: 10px; font-size: 13px;
-      margin-bottom: 10px; display: none;
+    .error-banner {
+      background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5;
+      padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+      margin-bottom: 10px; display: none; word-break: break-word;
     }
 
     .card {
@@ -71,7 +73,7 @@
     }
     .scan-hud {
       position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.82); color: #f8fafc;
+      background: rgba(15, 23, 42, 0.85); color: #f8fafc;
       padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;
       white-space: nowrap; z-index: 16; pointer-events: none;
       border: 1px solid rgba(255,255,255,0.18);
@@ -218,17 +220,15 @@
 <body>
 
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('scan')">📷 바코드 스캔</button>
-    <button class="tab-btn" onclick="switchTab('list')">📋 입고 현황 (<span id="totalBadge">0</span>)</button>
+    <button type="button" class="tab-btn active" id="tabScanBtn" onclick="switchTab('scan')">📷 바코드 스캔</button>
+    <button type="button" class="tab-btn" id="tabListBtn" onclick="switchTab('list')">📋 입고 현황 (<span id="totalBadge">0</span>)</button>
   </div>
 
   <div id="toast"></div>
 
   <!-- 탭 1: 1회 즉시 스캔 -->
   <div id="sec-scan" class="container section active">
-    <div id="urlWarn" class="warn-banner">
-      ⚠️ 7번째 줄의 <strong>GAS_API_URL</strong>에 배포한 Google Apps Script 웹 앱 주소를 입력해 주세요.
-    </div>
+    <div id="errorBox" class="error-banner"></div>
 
     <div class="scanner-wrap">
       <div id="reader"></div>
@@ -237,9 +237,9 @@
     </div>
 
     <div class="cam-controls">
-      <button id="btnCamToggle" class="btn btn-primary" onclick="toggleCamera()">📷 카메라 켜기</button>
-      <button id="btnTorch" class="btn btn-dark" style="display:none; flex:0.55;" onclick="toggleTorch()">🔦 플래시</button>
-      <button id="btnZoom" class="btn btn-dark" style="display:none; flex:0.5;" onclick="toggleZoom()">🔍 1x</button>
+      <button type="button" id="btnCamToggle" class="btn btn-primary" onclick="toggleCamera()">📷 카메라 켜기</button>
+      <button type="button" id="btnTorch" class="btn btn-dark" style="display:none; flex:0.55;" onclick="toggleTorch()">🔦 플래시</button>
+      <button type="button" id="btnZoom" class="btn btn-dark" style="display:none; flex:0.5;" onclick="toggleZoom()">🔍 1x</button>
     </div>
 
     <div class="card">
@@ -250,7 +250,7 @@
         </label>
       </div>
       <div class="row-flex">
-        <input type="text" id="workerName" placeholder="이름 (자동저장)" onchange="saveWorker()">
+        <input type="text" id="workerName" placeholder="작업자 이름 (자동저장)" onchange="saveWorker()">
       </div>
     </div>
 
@@ -258,7 +258,7 @@
       <div class="card-title">바코드 훼손 시 직접 입력</div>
       <div class="row-flex">
         <input type="text" id="manualCode" placeholder="예: 3F-G01-12-04" style="text-transform:uppercase;">
-        <button class="btn btn-dark" style="flex:0.35; padding:10px;" onclick="openManualConfirm()">확인</button>
+        <button type="button" class="btn btn-dark" style="flex:0.35; padding:10px;" onclick="openManualConfirm()">확인</button>
       </div>
     </div>
 
@@ -271,10 +271,10 @@
   <!-- 탭 2: 입고 현황 및 엑셀 복사 -->
   <div id="sec-list" class="container section">
     <div class="toolbar">
-      <button class="btn btn-primary" onclick="copySelected()">📋 선택 복사</button>
-      <button class="btn btn-amber" onclick="batchUpdate('선점중')">🏷️ 선점</button>
-      <button class="btn btn-green" onclick="batchUpdate('입고완료')">✅ 입고완료</button>
-      <button class="btn btn-dark" style="flex:0.35; min-width:52px;" onclick="loadList()">🔄</button>
+      <button type="button" class="btn btn-primary" onclick="copySelected()">📋 선택 복사</button>
+      <button type="button" class="btn btn-amber" onclick="batchUpdate('선점중')">🏷️ 선점</button>
+      <button type="button" class="btn btn-green" onclick="batchUpdate('입고완료')">✅ 입고완료</button>
+      <button type="button" class="btn btn-dark" style="flex:0.35; min-width:52px;" onclick="loadList()">🔄</button>
     </div>
 
     <div class="filter-scroll" id="gFilterBar"></div>
@@ -323,8 +323,8 @@
       <input type="text" id="modalMemo" placeholder="추가 메모 (선택)" style="margin-bottom:14px;">
 
       <div class="row-flex">
-        <button class="btn btn-outline" style="flex:0.45;" onclick="closeModal()">취소 / 재스캔</button>
-        <button id="btnConfirmSubmit" class="btn btn-primary" onclick="submitConfirmedCode()">빈자리 등록</button>
+        <button type="button" class="btn btn-outline" style="flex:0.45;" onclick="closeModal()">취소 / 재스캔</button>
+        <button type="button" id="btnConfirmSubmit" class="btn btn-primary" onclick="submitConfirmedCode()">빈자리 등록</button>
       </div>
     </div>
   </div>
@@ -344,15 +344,28 @@
     let allData = [];
     let filterG = 'ALL';
 
-    window.onload = function() {
-      if (!GAS_API_URL || GAS_API_URL.includes('여기에_')) {
-        document.getElementById('urlWarn').style.display = 'block';
-      }
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      if (!box) return;
+      box.innerHTML = '⚠️ ' + msg;
+      box.style.display = 'block';
+    }
+
+    function clearError() {
+      const box = document.getElementById('errorBox');
+      if (box) box.style.display = 'none';
+    }
+
+    window.onerror = function(message, source, lineno) {
+      showError('화면 오류(' + lineno + '줄): ' + message);
+    };
+
+    window.addEventListener('DOMContentLoaded', function() {
       const savedWorker = localStorage.getItem('wms_worker_name');
       if (savedWorker) document.getElementById('workerName').value = savedWorker;
       initTierButtons();
       loadList();
-    };
+    });
 
     function initTierButtons() {
       const grid = document.getElementById('modalTierGrid');
@@ -378,19 +391,471 @@
       } catch (e) {}
     }
 
-    function playBeep(freq = 1350, duration = 0.09) {
+    function playBeep(freq, duration) {
       try {
         if (!audioCtx) return;
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sine';
-        osc.frequency.value = freq;
+        osc.frequency.value = freq || 1350;
         gain.gain.value = 0.12;
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start();
-        osc.stop(audioCtx.currentTime + duration);
+        osc.stop(audioCtx.currentTime + (duration || 0.09));
       } catch (e) {}
     }
 
-    async function
+    // 외부 바코드 라이브러리 자동 확보 (jsDelivr 실패 시 unpkg 백업 로드)
+    function ensureScannerLibrary() {
+      return new Promise((resolve, reject) => {
+        if (typeof Html5Qrcode !== 'undefined') {
+          resolve();
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+        script.onload = () => {
+          if (typeof Html5Qrcode !== 'undefined') resolve();
+          else reject(new Error('스캐너 라이브러리 초기화 실패'));
+        };
+        script.onerror = () => reject(new Error('네트워크 또는 회사 와이파이가 스캐너 라이브러리 다운로드를 차단했습니다. 와이파이를 끄고 모바일 데이터(5G/LTE)로 다시 시도해 주세요.'));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function toggleCamera() {
+      clearError();
+      initAudio();
+      if (isScanning) {
+        await stopCamera();
+      } else {
+        await startCamera();
+      }
+    }
+
+    async function startCamera() {
+      const btn = document.getElementById('btnCamToggle');
+      btn.disabled = true;
+      btn.textContent = '카메라 여는 중...';
+      updateHud('카메라 준비 중...');
+
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('보안 주소(https://)에서만 카메라가 켜집니다. GitHub Pages 주소로 접속했는지 확인해 주세요.');
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('현재 브라우저에서는 카메라를 지원하지 않습니다. 카카오톡이 아닌 크롬(Chrome) 또는 사파리(Safari)로 열어주세요.');
+        }
+
+        await ensureScannerLibrary();
+
+        if (!html5QrCode) {
+          html5QrCode = new Html5Qrcode('reader', {
+            formatsToSupport: [
+              Html5QrcodeSupportedFormats.CODE_128,
+              Html5QrcodeSupportedFormats.CODE_39,
+              Html5QrcodeSupportedFormats.CODE_93,
+              Html5QrcodeSupportedFormats.ITF,
+              Html5QrcodeSupportedFormats.CODABAR
+            ],
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+            verbose: false
+          });
+        }
+
+        const config = {
+          fps: 15,
+          qrbox: function(vw, vh) {
+            const w = Math.min(vw - 12, Math.max(50, Math.floor(vw * 0.88)));
+            const h = Math.min(vh - 12, Math.max(54, Math.min(68, Math.floor(vh * 0.16))));
+            return { width: w, height: h };
+          }
+        };
+
+        try {
+          await html5QrCode.start({ facingMode: 'environment' }, config, onScanSuccess, () => {});
+        } catch (firstErr) {
+          // 일부 기기에서 facingMode 실패 시 후면 카메라 ID로 재시도
+          const cameras = await Html5Qrcode.getCameras();
+          if (!cameras || cameras.length === 0) throw firstErr;
+          const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+          await html5QrCode.start(backCam.id, config, onScanSuccess, () => {});
+        }
+
+        isScanning = true;
+        document.getElementById('laserLine').style.display = 'block';
+        updateHud('빨간 가로선에 바코드를 맞추세요');
+        btn.textContent = '⏹ 카메라 끄기';
+        btn.className = 'btn btn-danger';
+        setupCameraCapabilities();
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        showError('카메라 실행 실패: ' + msg);
+        updateHud('카메라 시작 실패 (위 빨간 안내 확인)');
+        btn.textContent = '📷 카메라 켜기';
+        btn.className = 'btn btn-primary';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function stopCamera() {
+      if (!html5QrCode || !isScanning) return;
+      try {
+        await html5QrCode.stop();
+      } catch (e) {}
+      isScanning = false;
+      isTorchOn = false;
+      isZoomed = false;
+      document.getElementById('laserLine').style.display = 'none';
+      document.getElementById('btnTorch').style.display = 'none';
+      document.getElementById('btnZoom').style.display = 'none';
+      const btn = document.getElementById('btnCamToggle');
+      btn.textContent = '📷 카메라 켜기';
+      btn.className = 'btn btn-primary';
+      updateHud('카메라 켜기를 눌러 스캔을 시작하세요');
+    }
+
+    function setupCameraCapabilities() {
+      try {
+        const caps = html5QrCode.getRunningTrackCameraCapabilities();
+        if (caps.torchFeature && caps.torchFeature().isSupported()) {
+          document.getElementById('btnTorch').style.display = 'block';
+        }
+        if (caps.zoomFeature && caps.zoomFeature().isSupported()) {
+          document.getElementById('btnZoom').style.display = 'block';
+        }
+      } catch (e) {}
+    }
+
+    async function toggleTorch() {
+      try {
+        const caps = html5QrCode.getRunningTrackCameraCapabilities();
+        isTorchOn = !isTorchOn;
+        await caps.torchFeature().apply(isTorchOn);
+        document.getElementById('btnTorch').className = isTorchOn ? 'btn btn-amber' : 'btn btn-dark';
+      } catch (e) {
+        showToast('이 기기에서는 플래시 제어가 지원되지 않습니다.');
+      }
+    }
+
+    async function toggleZoom() {
+      try {
+        const caps = html5QrCode.getRunningTrackCameraCapabilities();
+        const zoomFeat = caps.zoomFeature();
+        isZoomed = !isZoomed;
+        const target = isZoomed ? Math.min(2.0, zoomFeat.max()) : zoomFeat.min();
+        await zoomFeat.apply(target);
+        document.getElementById('btnZoom').textContent = isZoomed ? `🔍 ${target.toFixed(1)}x` : '🔍 1x';
+      } catch (e) {
+        showToast('이 기기에서는 줌 제어가 지원되지 않습니다.');
+      }
+    }
+
+    function updateHud(text) {
+      document.getElementById('scanHud').textContent = text;
+    }
+
+    function onScanSuccess(decodedText) {
+      if (isModalOpen) return;
+
+      const code = decodedText.trim().toUpperCase();
+      const strict = document.getElementById('chkStrictFormat').checked;
+      if (strict && !LOCATION_REGEX.test(code)) {
+        return;
+      }
+
+      if (navigator.vibrate) navigator.vibrate(65);
+      playBeep(1350, 0.09);
+      updateHud('인식 완료! 확인 후 등록하세요');
+      openConfirmModal(code);
+    }
+
+    function openManualConfirm() {
+      const code = document.getElementById('manualCode').value.trim().toUpperCase();
+      if (!code) { showToast('로케이션 코드를 입력해 주세요.'); return; }
+      openConfirmModal(code);
+    }
+
+    function openConfirmModal(code) {
+      isModalOpen = true;
+      document.getElementById('modalCodeInput').value = code;
+      document.getElementById('modalMemo').value = '';
+      document.querySelectorAll('#memoChips .chip').forEach(c => c.classList.remove('active'));
+      syncQuickButtonsFromInput();
+      document.getElementById('confirmModal').classList.add('open');
+    }
+
+    function syncQuickButtonsFromInput() {
+      const val = document.getElementById('modalCodeInput').value.trim().toUpperCase();
+      const parts = val.split('-');
+      const wrap = document.getElementById('quickFixWrap');
+
+      if (parts.length === 4) {
+        wrap.style.display = 'block';
+        const curTier = parts[3].padStart(2, '0');
+        document.querySelectorAll('#modalTierGrid .tier-btn').forEach(b => {
+          b.classList.toggle('selected', b.dataset.tier === curTier);
+        });
+      } else {
+        wrap.style.display = 'none';
+      }
+    }
+
+    function changeTier(tier) {
+      const input = document.getElementById('modalCodeInput');
+      const parts = input.value.trim().toUpperCase().split('-');
+      if (parts.length !== 4) return;
+      parts[3] = tier;
+      input.value = parts.join('-');
+      syncQuickButtonsFromInput();
+    }
+
+    function nudgeBay(delta) {
+      const input = document.getElementById('modalCodeInput');
+      const parts = input.value.trim().toUpperCase().split('-');
+      if (parts.length !== 4) return;
+      const num = parseInt(parts[2], 10);
+      if (isNaN(num)) return;
+      const next = Math.max(1, Math.min(99, num + delta));
+      parts[2] = String(next).padStart(2, '0');
+      input.value = parts.join('-');
+      syncQuickButtonsFromInput();
+    }
+
+    function closeModal() {
+      document.getElementById('confirmModal').classList.remove('open');
+      setTimeout(() => {
+        isModalOpen = false;
+        if (isScanning) updateHud('빨간 가로선에 바코드를 맞추세요');
+      }, 600);
+    }
+
+    function toggleMemo(el, text) {
+      const input = document.getElementById('modalMemo');
+      const active = el.classList.toggle('active');
+      if (active) {
+        input.value = input.value ? `${input.value}, ${text}` : text;
+      } else {
+        input.value = input.value.split(',').map(s => s.trim()).filter(s => s !== text).join(', ');
+      }
+    }
+
+    async function apiPost(payload) {
+      const res = await fetch(GAS_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    }
+
+    async function submitConfirmedCode() {
+      const finalCode = document.getElementById('modalCodeInput').value.trim().toUpperCase();
+      if (!finalCode) { showToast('로케이션 코드를 입력해 주세요.'); return; }
+
+      const btn = document.getElementById('btnConfirmSubmit');
+      const worker = document.getElementById('workerName').value.trim() || '현장작업자';
+      const memo = document.getElementById('modalMemo').value.trim();
+      saveWorker();
+
+      btn.disabled = true;
+      btn.textContent = '저장 중...';
+
+      try {
+        const res = await apiPost({
+          action: 'add',
+          code: finalCode,
+          worker: worker,
+          memo: memo
+        });
+
+        showToast(res.message || '처리되었습니다.');
+        if (res.success) {
+          recentCodes.unshift(finalCode);
+          if (recentCodes.length > 5) recentCodes.pop();
+          renderRecent();
+          document.getElementById('manualCode').value = '';
+          loadList();
+          closeModal();
+        }
+      } catch (err) {
+        showError('구글 시트 전송 실패: ' + (err.message || err));
+        showToast('전송 실패: 네트워크 상태를 확인하세요.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '빈자리 등록';
+      }
+    }
+
+    function renderRecent() {
+      const card = document.getElementById('recentCard');
+      const list = document.getElementById('recentList');
+      if (recentCodes.length === 0) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+      list.innerHTML = recentCodes.map(code => {
+        const safeCode = code.replace(/'/g, "\\'");
+        return `
+          <div class="recent-item">
+            <strong>${code}</strong>
+            <button type="button" class="btn-mini" onclick="undoRecent('${safeCode}')">등록 취소</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function undoRecent(code) {
+      try {
+        await apiPost({ action: 'updateStatus', codes: [code], newStatus: '취소삭제' });
+        recentCodes = recentCodes.filter(c => c !== code);
+        renderRecent();
+        loadList();
+        showToast(`${code} 등록이 취소되었습니다.`);
+      } catch (err) {
+        showToast('취소 처리 실패');
+      }
+    }
+
+    function switchTab(tab) {
+      document.getElementById('tabScanBtn').classList.toggle('active', tab === 'scan');
+      document.getElementById('tabListBtn').classList.toggle('active', tab === 'list');
+      document.getElementById('sec-scan').classList.toggle('active', tab === 'scan');
+      document.getElementById('sec-list').classList.toggle('active', tab === 'list');
+      if (tab === 'list') {
+        stopCamera();
+        loadList();
+      }
+    }
+
+    async function loadList() {
+      if (!GAS_API_URL) return;
+      try {
+        const res = await fetch(`${GAS_API_URL}?action=list&t=${Date.now()}`);
+        const json = await res.json();
+        allData = (json.success && Array.isArray(json.data)) ? json.data : [];
+        document.getElementById('totalBadge').textContent = allData.length;
+        renderFilters();
+        renderList();
+      } catch (err) {
+        document.getElementById('locListContainer').innerHTML =
+          `<div class="card" style="text-align:center; color:#dc2626;">목록을 불러오지 못했습니다.</div>`;
+      }
+    }
+
+    function renderFilters() {
+      const bar = document.getElementById('gFilterBar');
+      const gSet = [...new Set(allData.map(d => d.gLine).filter(Boolean))];
+      let html = `<button type="button" class="filter-pill ${filterG === 'ALL' ? 'active' : ''}" onclick="setFilter('ALL')">전체 (${allData.length})</button>`;
+      gSet.forEach(g => {
+        const cnt = allData.filter(d => d.gLine === g).length;
+        html += `<button type="button" class="filter-pill ${filterG === g ? 'active' : ''}" onclick="setFilter('${g}')">${g} (${cnt})</button>`;
+      });
+      bar.innerHTML = html;
+    }
+
+    function setFilter(g) {
+      filterG = g;
+      document.getElementById('chkAll').checked = false;
+      renderFilters();
+      renderList();
+    }
+
+    function renderList() {
+      const container = document.getElementById('locListContainer');
+      const filtered = filterG === 'ALL' ? allData : allData.filter(d => d.gLine === filterG);
+      document.getElementById('listCountText').textContent = `총 ${filtered.length}건`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="card" style="text-align:center; padding:30px; color:#6b7280;">현재 등록된 빈 로케이션이 없습니다.</div>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(item => {
+        const isRes = item.status === '선점중';
+        return `
+          <div class="loc-item ${isRes ? 'reserved' : ''}">
+            <input type="checkbox" class="loc-chk item-chk" value="${item.code}">
+            <div class="loc-info">
+              <div class="loc-code">
+                ${item.code}
+                <span class="badge ${isRes ? 'badge-res' : 'badge-empty'}">${item.status}</span>
+              </div>
+              <div class="loc-meta">
+                ${timeAgo(item.timestamp)} · ${item.worker} ${item.memo ? `· <strong>${item.memo}</strong>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function toggleAllChk(checked) {
+      document.querySelectorAll('.item-chk').forEach(c => c.checked = checked);
+    }
+
+    function getCheckedCodes() {
+      return [...document.querySelectorAll('.item-chk:checked')].map(c => c.value);
+    }
+
+    function copySelected() {
+      let codes = getCheckedCodes();
+      if (codes.length === 0) {
+        const filtered = filterG === 'ALL' ? allData : allData.filter(d => d.gLine === filterG);
+        codes = filtered.filter(d => d.status === '빈자리').map(d => d.code);
+      }
+      if (codes.length === 0) { showToast('복사할 로케이션이 없습니다.'); return; }
+
+      const text = codes.join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => showToast(`${codes.length}건 복사 완료! 엑셀에 붙여넣으세요.`))
+          .catch(() => fallbackCopy(text, codes.length));
+      } else {
+        fallbackCopy(text, codes.length);
+      }
+    }
+
+    function fallbackCopy(text, count) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(`${count}건 복사 완료! 엑셀에 붙여넣으세요.`);
+    }
+
+    async function batchUpdate(newStatus) {
+      const codes = getCheckedCodes();
+      if (codes.length === 0) { showToast('먼저 항목을 체크해 주세요.'); return; }
+      try {
+        const res = await apiPost({ action: 'updateStatus', codes: codes, newStatus: newStatus });
+        showToast(`${res.count || 0}건 → [${newStatus}] 변경 완료`);
+        document.getElementById('chkAll').checked = false;
+        loadList();
+      } catch (err) {
+        showToast('상태 변경 실패');
+      }
+    }
+
+    function timeAgo(ts) {
+      if (!ts) return '';
+      const diffMin = Math.floor((Date.now() - ts) / 60000);
+      if (diffMin < 1) return '방금 전';
+      if (diffMin < 60) return `${diffMin}분 전`;
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return `${diffHr}시간 전`;
+      return `${Math.floor(diffHr / 24)}일 전`;
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => t.classList.remove('show'), 2300);
+    }
+  </script>
+</body>
+</html>
