@@ -9,6 +9,7 @@
     // Google Apps Script 웹 앱 URL
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyQUV5Pm4W6Ocp06swFBZbXxHMqYfncR-emzegPJBQMjuos5LHecKB2fs1ELNvNa9M/exec';
   </script>
+  <!-- 아이폰 사파리 등 네이티브 스캐너 미지원 기기용 백업 라이브러리 -->
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
   <style>
     :root {
@@ -58,31 +59,65 @@
       margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
     }
 
+    /* 스캐너 뷰파인더 */
     .scanner-wrap {
-      position: relative; width: 100%; min-height: 260px;
+      position: relative; width: 100%; height: 280px;
       background: #0f172a; border-radius: 12px; overflow: hidden;
       margin-bottom: 10px;
     }
-    #reader { width: 100%; }
+    #nativeVideo {
+      width: 100%; height: 100%; object-fit: cover; display: none;
+    }
+    #reader {
+      width: 100%; height: 100%; display: none;
+    }
+    #reader video {
+      width: 100% !important; height: 280px !important; object-fit: cover !important;
+    }
+
+    /* 네이티브 고속 스캐너 조준 가이드 마스크 */
+    .aim-overlay {
+      position: absolute; inset: 0; pointer-events: none; z-index: 12;
+      display: none; flex-direction: column;
+    }
+    .aim-shade {
+      flex: 1; background: rgba(15, 23, 42, 0.48);
+    }
+    .aim-window {
+      height: 86px; position: relative;
+      border-top: 2px solid rgba(56, 189, 248, 0.85);
+      border-bottom: 2px solid rgba(56, 189, 248, 0.85);
+      box-shadow: inset 0 0 12px rgba(56, 189, 248, 0.25);
+    }
+
     .laser-line {
-      position: absolute; left: 6%; right: 6%; top: 50%; height: 2px;
+      position: absolute; left: 5%; right: 5%; top: 50%; height: 2px;
       background: rgba(239, 68, 68, 0.95);
-      box-shadow: 0 0 10px 2px rgba(239, 68, 68, 0.8);
+      box-shadow: 0 0 10px 2px rgba(239, 68, 68, 0.85);
       transform: translateY(-50%); pointer-events: none; z-index: 15;
       display: none;
     }
+    .engine-badge {
+      position: absolute; top: 8px; left: 8px; z-index: 17;
+      background: rgba(15, 23, 42, 0.78); color: #38bdf8;
+      padding: 4px 9px; border-radius: 12px; font-size: 11px; font-weight: 800;
+      display: none; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
     .scan-hud {
       position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.85); color: #f8fafc;
+      background: rgba(15, 23, 42, 0.86); color: #f8fafc;
       padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;
-      white-space: nowrap; z-index: 16; pointer-events: none;
+      white-space: nowrap; max-width: 94%; overflow: hidden; text-overflow: ellipsis;
+      z-index: 16; pointer-events: none;
       border: 1px solid rgba(255,255,255,0.18);
     }
 
-    .cam-controls { display: flex; gap: 6px; margin-bottom: 10px; }
+    .cam-controls { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
     .btn {
-      flex: 1; padding: 12px 10px; border: none; border-radius: 9px;
+      flex: 1; padding: 12px 8px; border: none; border-radius: 9px;
       font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+      white-space: nowrap;
     }
     .btn-primary { background: var(--primary); }
     .btn-dark { background: #334155; }
@@ -226,20 +261,28 @@
 
   <div id="toast"></div>
 
-  <!-- 탭 1: 1회 즉시 스캔 -->
+  <!-- 탭 1: 고속 바코드 스캔 -->
   <div id="sec-scan" class="container section active">
     <div id="errorBox" class="error-banner"></div>
 
-    <div class="scanner-wrap">
+    <div class="scanner-wrap" onclick="triggerRefocus()">
+      <video id="nativeVideo" autoplay playsinline muted></video>
       <div id="reader"></div>
+      <div id="aimOverlay" class="aim-overlay">
+        <div class="aim-shade"></div>
+        <div class="aim-window"></div>
+        <div class="aim-shade"></div>
+      </div>
       <div id="laserLine" class="laser-line"></div>
+      <div id="engineBadge" class="engine-badge">⚡ 고속 인식</div>
       <div id="scanHud" class="scan-hud">카메라 켜기를 눌러 스캔을 시작하세요</div>
     </div>
 
     <div class="cam-controls">
       <button type="button" id="btnCamToggle" class="btn btn-primary" onclick="toggleCamera()">📷 카메라 켜기</button>
-      <button type="button" id="btnTorch" class="btn btn-dark" style="display:none; flex:0.55;" onclick="toggleTorch()">🔦 플래시</button>
-      <button type="button" id="btnZoom" class="btn btn-dark" style="display:none; flex:0.5;" onclick="toggleZoom()">🔍 1x</button>
+      <button type="button" id="btnZoom" class="btn btn-dark" style="display:none; flex:0.45;" onclick="cycleZoom()">🔍 1.0x</button>
+      <button type="button" id="btnTorch" class="btn btn-dark" style="display:none; flex:0.45;" onclick="toggleTorch()">🔦 라이트</button>
+      <button type="button" id="btnSwitchCam" class="btn btn-dark" style="display:none; flex:0.45;" onclick="switchRearLens()">🔄 렌즈</button>
     </div>
 
     <div class="card">
@@ -250,7 +293,7 @@
         </label>
       </div>
       <div class="row-flex">
-        <input type="text" id="workerName" placeholder="로케이션 (자동저장)" onchange="saveWorker()">
+        <input type="text" id="workerName" placeholder="작업자 이름 (자동저장)" onchange="saveWorker()">
       </div>
     </div>
 
@@ -330,14 +373,25 @@
   </div>
 
   <script>
-    const LOCATION_REGEX = /^[0-9A-Z]+-[A-Z]+\d+-\d+-\d+$/i;
+    // 로케이션 형식 필터 (예: 3F-G01-01-01, G01-01-01 등 하이픈 2~3개 포함 영숫자)
+    const LOCATION_REGEX = /^[0-9A-Z]+(-[0-9A-Z]+){2,3}$/i;
     const MAX_TIERS = 7;
+
+    let activeEngine = null; // 'native' | 'html5'
+    let nativeStream = null;
+    let nativeTrack = null;
+    let nativeDetector = null;
+    let nativeLoopTimer = null;
+    let isDetecting = false;
 
     let html5QrCode = null;
     let isScanning = false;
     let isModalOpen = false;
     let isTorchOn = false;
-    let isZoomed = false;
+    let zoomSteps = [1.0, 1.5, 2.0, 3.0];
+    let currentZoomIdx = 0;
+    let rearCameras = [];
+    let currentCamIdx = 0;
     let audioCtx = null;
 
     let recentCodes = [];
@@ -406,7 +460,16 @@
       } catch (e) {}
     }
 
-    // 외부 바코드 라이브러리 자동 확보 (jsDelivr 실패 시 unpkg 백업 로드)
+    async function supportsNative1D() {
+      if (!('BarcodeDetector' in window)) return false;
+      try {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        return supported.includes('code_128') || supported.includes('code_39');
+      } catch (e) {
+        return false;
+      }
+    }
+
     function ensureScannerLibrary() {
       return new Promise((resolve, reject) => {
         if (typeof Html5Qrcode !== 'undefined') {
@@ -419,7 +482,7 @@
           if (typeof Html5Qrcode !== 'undefined') resolve();
           else reject(new Error('스캐너 라이브러리 초기화 실패'));
         };
-        script.onerror = () => reject(new Error('네트워크 또는 회사 와이파이가 스캐너 라이브러리 다운로드를 차단했습니다. 와이파이를 끄고 모바일 데이터(5G/LTE)로 다시 시도해 주세요.'));
+        script.onerror = () => reject(new Error('네트워크 또는 와이파이가 스캐너 라이브러리 다운로드를 차단했습니다. 모바일 데이터(5G/LTE)로 시도해 주세요.'));
         document.head.appendChild(script);
       });
     }
@@ -434,65 +497,36 @@
       }
     }
 
-    async function startCamera() {
+    async function startCamera(preferredDeviceId) {
       const btn = document.getElementById('btnCamToggle');
       btn.disabled = true;
       btn.textContent = '카메라 여는 중...';
-      updateHud('카메라 준비 중...');
+      updateHud('고화질 카메라 준비 중...');
 
       try {
         if (!window.isSecureContext) {
-          throw new Error('보안 주소(https://)에서만 카메라가 켜집니다. GitHub Pages 주소로 접속했는지 확인해 주세요.');
+          throw new Error('보안 주소(https://)에서만 카메라가 켜집니다.');
         }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('현재 브라우저에서는 카메라를 지원하지 않습니다. 카카오톡이 아닌 크롬(Chrome) 또는 사파리(Safari)로 열어주세요.');
+          throw new Error('크롬(Chrome) 또는 사파리(Safari) 브라우저로 열어주세요.');
         }
 
-        await ensureScannerLibrary();
-
-        if (!html5QrCode) {
-          html5QrCode = new Html5Qrcode('reader', {
-            formatsToSupport: [
-              Html5QrcodeSupportedFormats.CODE_128,
-              Html5QrcodeSupportedFormats.CODE_39,
-              Html5QrcodeSupportedFormats.CODE_93,
-              Html5QrcodeSupportedFormats.ITF,
-              Html5QrcodeSupportedFormats.CODABAR
-            ],
-            experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-            verbose: false
-          });
-        }
-
-        const config = {
-          fps: 15,
-          qrbox: function(vw, vh) {
-            const w = Math.min(vw - 12, Math.max(50, Math.floor(vw * 0.88)));
-            const h = Math.min(vh - 12, Math.max(54, Math.min(68, Math.floor(vh * 0.16))));
-            return { width: w, height: h };
-          }
-        };
-
-        try {
-          await html5QrCode.start({ facingMode: 'environment' }, config, onScanSuccess, () => {});
-        } catch (firstErr) {
-          // 일부 기기에서 facingMode 실패 시 후면 카메라 ID로 재시도
-          const cameras = await Html5Qrcode.getCameras();
-          if (!cameras || cameras.length === 0) throw firstErr;
-          const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
-          await html5QrCode.start(backCam.id, config, onScanSuccess, () => {});
+        const useNative = await supportsNative1D();
+        if (useNative) {
+          await startNativeScanner(preferredDeviceId);
+        } else {
+          await startFallbackScanner();
         }
 
         isScanning = true;
         document.getElementById('laserLine').style.display = 'block';
-        updateHud('빨간 가로선에 바코드를 맞추세요');
+        updateHud('빨간 가로선에 바코드 1개를 맞추세요 (15~25cm 거리 권장)');
         btn.textContent = '⏹ 카메라 끄기';
         btn.className = 'btn btn-danger';
-        setupCameraCapabilities();
       } catch (err) {
         const msg = (err && err.message) ? err.message : String(err);
         showError('카메라 실행 실패: ' + msg);
-        updateHud('카메라 시작 실패 (위 빨간 안내 확인)');
+        updateHud('카메라 시작 실패 (위 안내 확인)');
         btn.textContent = '📷 카메라 켜기';
         btn.className = 'btn btn-primary';
       } finally {
@@ -500,78 +534,377 @@
       }
     }
 
-    async function stopCamera() {
-      if (!html5QrCode || !isScanning) return;
+    // ================= 엔진 A: 안드로이드 크롬 하드웨어 고속 스캐너 =================
+    async function startNativeScanner(preferredDeviceId) {
+      activeEngine = 'native';
+      const video = document.getElementById('nativeVideo');
+      document.getElementById('reader').style.display = 'none';
+      video.style.display = 'block';
+      document.getElementById('aimOverlay').style.display = 'flex';
+
+      const badge = document.getElementById('engineBadge');
+      badge.textContent = '⚡ 고속 HD 스캐너';
+      badge.style.display = 'block';
+
+      const baseVideo = preferredDeviceId
+        ? { deviceId: { exact: preferredDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+
       try {
-        await html5QrCode.stop();
-      } catch (e) {}
-      isScanning = false;
-      isTorchOn = false;
-      isZoomed = false;
-      document.getElementById('laserLine').style.display = 'none';
-      document.getElementById('btnTorch').style.display = 'none';
-      document.getElementById('btnZoom').style.display = 'none';
-      const btn = document.getElementById('btnCamToggle');
-      btn.textContent = '📷 카메라 켜기';
-      btn.className = 'btn btn-primary';
-      updateHud('카메라 켜기를 눌러 스캔을 시작하세요');
+        nativeStream = await navigator.mediaDevices.getUserMedia({ video: baseVideo, audio: false });
+      } catch (e) {
+        // 1080p 실패 시 720p/기본 해상도로 폴백
+        const fallbackVideo = preferredDeviceId
+          ? { deviceId: { exact: preferredDeviceId } }
+          : { facingMode: 'environment' };
+        nativeStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: false });
+      }
+
+      video.srcObject = nativeStream;
+      await video.play();
+      nativeTrack = nativeStream.getVideoTracks()[0];
+
+      // 연속 오토포커스 강제 활성화
+      await applyContinuousFocus(nativeTrack);
+
+      // 후면 카메라 목록 수집 (다중 렌즈 전환 지원)
+      await refreshRearCameraList(nativeTrack);
+
+      // 줌·플래시 버튼 세팅 (기본 1.5배 줌 지원 시 1.5x 자동 적용으로 근접 초점 개선)
+      await setupNativeControls(nativeTrack);
+
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      const target1D = ['code_128', 'code_39', 'code_93', 'codabar', 'itf'].filter(f => supported.includes(f));
+      nativeDetector = new window.BarcodeDetector({
+        formats: target1D.length > 0 ? target1D : supported
+      });
+
+      isDetecting = false;
+      scheduleNativeScan();
     }
 
-    function setupCameraCapabilities() {
+    async function applyContinuousFocus(track) {
+      try {
+        if (!track || !track.getCapabilities) return;
+        const caps = track.getCapabilities();
+        if (caps.focusMode && caps.focusMode.includes('continuous')) {
+          await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        }
+      } catch (e) {}
+    }
+
+    async function refreshRearCameraList(activeTrack) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videos = devices.filter(d => d.kind === 'videoinput');
+        const rears = videos.filter(d => !/front|user|전면/i.test(d.label));
+        rearCameras = rears.length >= 2 ? rears : videos;
+
+        const activeId = activeTrack && activeTrack.getSettings ? activeTrack.getSettings().deviceId : '';
+        const foundIdx = rearCameras.findIndex(c => c.deviceId === activeId);
+        if (foundIdx >= 0) currentCamIdx = foundIdx;
+
+        document.getElementById('btnSwitchCam').style.display = rearCameras.length >= 2 ? 'block' : 'none';
+      } catch (e) {}
+    }
+
+    async function setupNativeControls(track) {
+      try {
+        if (!track || !track.getCapabilities) return;
+        const caps = track.getCapabilities();
+
+        if (caps.torch) {
+          document.getElementById('btnTorch').style.display = 'block';
+        }
+        if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+          const minZ = caps.zoom.min;
+          const maxZ = caps.zoom.max;
+          zoomSteps = [1.0, 1.5, 2.0, 3.0].filter(z => z >= minZ && z <= maxZ);
+          if (zoomSteps.length === 0) zoomSteps = [minZ, maxZ];
+
+          // 1.5x 지원 시 기본값으로 적용 (조금 떨어져서 찍어도 크게 잡혀 초점이 훨씬 빠름)
+          const idx15 = zoomSteps.indexOf(1.5);
+          currentZoomIdx = idx15 >= 0 ? idx15 : 0;
+          const initZoom = zoomSteps[currentZoomIdx];
+          await track.applyConstraints({ advanced: [{ zoom: initZoom }] });
+          const zBtn = document.getElementById('btnZoom');
+          zBtn.textContent = `🔍 ${initZoom.toFixed(1)}x`;
+          zBtn.style.display = 'block';
+        }
+      } catch (e) {}
+    }
+
+    function scheduleNativeScan() {
+      if (nativeLoopTimer) clearTimeout(nativeLoopTimer);
+      nativeLoopTimer = setTimeout(runNativeScanTick, 60);
+    }
+
+    async function runNativeScanTick() {
+      if (!isScanning || activeEngine !== 'native') return;
+
+      const video = document.getElementById('nativeVideo');
+      if (!isModalOpen && !isDetecting && video.readyState >= 2 && video.videoWidth > 0) {
+        isDetecting = true;
+        try {
+          const barcodes = await nativeDetector.detect(video);
+          if (barcodes && barcodes.length > 0) {
+            pickCenterBarcode(barcodes, video);
+          }
+        } catch (e) {}
+        isDetecting = false;
+      }
+
+      if (isScanning && activeEngine === 'native') {
+        scheduleNativeScan();
+      }
+    }
+
+    // 전체 HD 프레임에서 읽힌 여러 바코드 중 '빨간 중앙선'에 닿은 바코드 1개만 정밀 선택
+    function pickCenterBarcode(barcodes, video) {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const cw = video.clientWidth || 360;
+      const ch = video.clientHeight || 280;
+
+      // object-fit: cover 기준 실제 화면에 보이는 세로 범위 계산
+      const scale = Math.max(cw / vw, ch / vh);
+      const visibleSrcH = ch / scale;
+      const centerY = vh / 2;
+      // 중앙 빨간선 기준 상하 허용 범위 (파란 조준창 86px 안쪽)
+      const maxDist = (86 / scale) * 0.55;
+      const strict = document.getElementById('chkStrictFormat').checked;
+
+      let bestCode = null;
+      let bestDist = Infinity;
+      let rejectedSample = '';
+
+      for (let i = 0; i < barcodes.length; i++) {
+        const b = barcodes[i];
+        const raw = String(b.rawValue || '').trim().toUpperCase();
+        if (!raw) continue;
+
+        const box = b.boundingBox;
+        let dist = 0;
+        let touchesCenter = true;
+
+        if (box) {
+          const boxTop = box.y;
+          const boxBottom = box.y + box.height;
+          const boxCenterY = (boxTop + boxBottom) / 2;
+          const pad = Math.max(12, visibleSrcH * 0.025);
+          const containsLine = (boxTop - pad <= centerY && boxBottom + pad >= centerY);
+          dist = Math.abs(boxCenterY - centerY);
+          touchesCenter = containsLine || (dist <= maxDist);
+        }
+
+        if (!touchesCenter) continue;
+
+        if (strict && !LOCATION_REGEX.test(raw)) {
+          rejectedSample = raw;
+          continue;
+        }
+
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestCode = raw;
+        }
+      }
+
+      if (bestCode) {
+        handleValidScan(bestCode);
+      } else if (rejectedSample) {
+        updateHud(`형식 다름(무시됨): ${rejectedSample}`);
+      }
+    }
+
+    // ================= 엔진 B: 사파리 등 백업 스캐너 (고해상도 + 넉넉한 슬릿) =================
+    async function startFallbackScanner() {
+      activeEngine = 'html5';
+      await ensureScannerLibrary();
+
+      document.getElementById('nativeVideo').style.display = 'none';
+      document.getElementById('aimOverlay').style.display = 'none';
+      document.getElementById('reader').style.display = 'block';
+
+      const badge = document.getElementById('engineBadge');
+      badge.textContent = '📷 HD 스캐너';
+      badge.style.display = 'block';
+
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode('reader', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.CODE_93,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.CODABAR
+          ],
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+          verbose: false
+        });
+      }
+
+      const config = {
+        fps: 20,
+        qrbox: function(vw, vh) {
+          const w = Math.min(vw - 12, Math.max(60, Math.floor(vw * 0.90)));
+          const h = Math.min(vh - 12, Math.max(92, Math.min(115, Math.floor(vh * 0.36))));
+          return { width: w, height: h };
+        },
+        videoConstraints: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      };
+
+      try {
+        await html5QrCode.start({ facingMode: 'environment' }, config, onFallbackScanSuccess, () => {});
+      } catch (firstErr) {
+        const cameras = await Html5Qrcode.getCameras();
+        if (!cameras || cameras.length === 0) throw firstErr;
+        const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+        await html5QrCode.start(backCam.id, config, onFallbackScanSuccess, () => {});
+      }
+
+      setupFallbackControls();
+    }
+
+    function onFallbackScanSuccess(decodedText) {
+      if (isModalOpen) return;
+      const code = decodedText.trim().toUpperCase();
+      const strict = document.getElementById('chkStrictFormat').checked;
+      if (strict && !LOCATION_REGEX.test(code)) {
+        updateHud(`형식 다름(무시됨): ${code}`);
+        return;
+      }
+      handleValidScan(code);
+    }
+
+    function setupFallbackControls() {
       try {
         const caps = html5QrCode.getRunningTrackCameraCapabilities();
         if (caps.torchFeature && caps.torchFeature().isSupported()) {
           document.getElementById('btnTorch').style.display = 'block';
         }
         if (caps.zoomFeature && caps.zoomFeature().isSupported()) {
+          const zf = caps.zoomFeature();
+          zoomSteps = [1.0, 1.5, 2.0].filter(z => z >= zf.min() && z <= zf.max());
+          if (zoomSteps.length === 0) zoomSteps = [zf.min(), zf.max()];
+          currentZoomIdx = 0;
+          document.getElementById('btnZoom').textContent = `🔍 ${zoomSteps[0].toFixed(1)}x`;
           document.getElementById('btnZoom').style.display = 'block';
         }
       } catch (e) {}
     }
 
-    async function toggleTorch() {
+    // ================= 카메라 공통 제어 (정지 / 줌 / 플래시 / 렌즈전환 / 초점) =================
+    async function stopCamera() {
+      isScanning = false;
+      isTorchOn = false;
+
+      if (nativeLoopTimer) {
+        clearTimeout(nativeLoopTimer);
+        nativeLoopTimer = null;
+      }
+      if (nativeStream) {
+        nativeStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+        nativeStream = null;
+        nativeTrack = null;
+      }
+      const video = document.getElementById('nativeVideo');
+      video.srcObject = null;
+      video.style.display = 'none';
+
+      if (html5QrCode && activeEngine === 'html5') {
+        try { await html5QrCode.stop(); } catch (e) {}
+      }
+      activeEngine = null;
+
+      document.getElementById('reader').style.display = 'none';
+      document.getElementById('aimOverlay').style.display = 'none';
+      document.getElementById('laserLine').style.display = 'none';
+      document.getElementById('engineBadge').style.display = 'none';
+      document.getElementById('btnTorch').style.display = 'none';
+      document.getElementById('btnZoom').style.display = 'none';
+      document.getElementById('btnSwitchCam').style.display = 'none';
+
+      const btn = document.getElementById('btnCamToggle');
+      btn.textContent = '📷 카메라 켜기';
+      btn.className = 'btn btn-primary';
+      updateHud('카메라 켜기를 눌러 스캔을 시작하세요');
+    }
+
+    async function cycleZoom() {
+      if (!isScanning || zoomSteps.length === 0) return;
+      currentZoomIdx = (currentZoomIdx + 1) % zoomSteps.length;
+      const target = zoomSteps[currentZoomIdx];
       try {
-        const caps = html5QrCode.getRunningTrackCameraCapabilities();
-        isTorchOn = !isTorchOn;
-        await caps.torchFeature().apply(isTorchOn);
-        document.getElementById('btnTorch').className = isTorchOn ? 'btn btn-amber' : 'btn btn-dark';
+        if (activeEngine === 'native' && nativeTrack) {
+          await nativeTrack.applyConstraints({ advanced: [{ zoom: target }] });
+        } else if (activeEngine === 'html5' && html5QrCode) {
+          const caps = html5QrCode.getRunningTrackCameraCapabilities();
+          await caps.zoomFeature().apply(target);
+        }
+        document.getElementById('btnZoom').textContent = `🔍 ${target.toFixed(1)}x`;
       } catch (e) {
-        showToast('이 기기에서는 플래시 제어가 지원되지 않습니다.');
+        showToast('이 기기에서는 줌 변경이 지원되지 않습니다.');
       }
     }
 
-    async function toggleZoom() {
+    async function toggleTorch() {
+      if (!isScanning) return;
+      isTorchOn = !isTorchOn;
       try {
-        const caps = html5QrCode.getRunningTrackCameraCapabilities();
-        const zoomFeat = caps.zoomFeature();
-        isZoomed = !isZoomed;
-        const target = isZoomed ? Math.min(2.0, zoomFeat.max()) : zoomFeat.min();
-        await zoomFeat.apply(target);
-        document.getElementById('btnZoom').textContent = isZoomed ? `🔍 ${target.toFixed(1)}x` : '🔍 1x';
+        if (activeEngine === 'native' && nativeTrack) {
+          await nativeTrack.applyConstraints({ advanced: [{ torch: isTorchOn }] });
+        } else if (activeEngine === 'html5' && html5QrCode) {
+          const caps = html5QrCode.getRunningTrackCameraCapabilities();
+          await caps.torchFeature().apply(isTorchOn);
+        }
+        document.getElementById('btnTorch').className = isTorchOn ? 'btn btn-amber' : 'btn btn-dark';
       } catch (e) {
-        showToast('이 기기에서는 줌 제어가 지원되지 않습니다.');
+        isTorchOn = !isTorchOn;
+        showToast('이 기기에서는 라이트 제어가 지원되지 않습니다.');
       }
+    }
+
+    async function switchRearLens() {
+      if (rearCameras.length < 2) return;
+      currentCamIdx = (currentCamIdx + 1) % rearCameras.length;
+      const nextCam = rearCameras[currentCamIdx];
+      await stopCamera();
+      await startCamera(nextCam.deviceId);
+      showToast(`렌즈 전환 (${currentCamIdx + 1}/${rearCameras.length})`);
+    }
+
+    async function triggerRefocus() {
+      if (!isScanning || activeEngine !== 'native' || !nativeTrack) return;
+      try {
+        const caps = nativeTrack.getCapabilities ? nativeTrack.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.includes('single-shot')) {
+          await nativeTrack.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+          setTimeout(() => applyContinuousFocus(nativeTrack), 350);
+          showToast('초점 재조정');
+        } else {
+          await applyContinuousFocus(nativeTrack);
+        }
+      } catch (e) {}
     }
 
     function updateHud(text) {
       document.getElementById('scanHud').textContent = text;
     }
 
-    function onScanSuccess(decodedText) {
+    function handleValidScan(code) {
       if (isModalOpen) return;
-
-      const code = decodedText.trim().toUpperCase();
-      const strict = document.getElementById('chkStrictFormat').checked;
-      if (strict && !LOCATION_REGEX.test(code)) {
-        return;
-      }
-
       if (navigator.vibrate) navigator.vibrate(65);
       playBeep(1350, 0.09);
       updateHud('인식 완료! 확인 후 등록하세요');
       openConfirmModal(code);
     }
 
+    // ================= 확인 및 수정 모달 =================
     function openManualConfirm() {
       const code = document.getElementById('manualCode').value.trim().toUpperCase();
       if (!code) { showToast('로케이션 코드를 입력해 주세요.'); return; }
@@ -628,7 +961,7 @@
       document.getElementById('confirmModal').classList.remove('open');
       setTimeout(() => {
         isModalOpen = false;
-        if (isScanning) updateHud('빨간 가로선에 바코드를 맞추세요');
+        if (isScanning) updateHud('빨간 가로선에 바코드 1개를 맞추세요 (15~25cm 거리 권장)');
       }, 600);
     }
 
@@ -642,6 +975,7 @@
       }
     }
 
+    // ================= 구글 시트 API 통신 =================
     async function apiPost(payload) {
       const res = await fetch(GAS_API_URL, {
         method: 'POST',
@@ -717,6 +1051,7 @@
       }
     }
 
+    // ================= 탭 2: 입고 현황 관리 =================
     function switchTab(tab) {
       document.getElementById('tabScanBtn').classList.toggle('active', tab === 'scan');
       document.getElementById('tabListBtn').classList.toggle('active', tab === 'list');
