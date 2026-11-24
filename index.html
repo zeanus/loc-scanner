@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="google" content="notranslate">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>빈 로케이션 파인더</title>
+  <title>빈 로케이션 바코드 스캐너</title>
   <script>
     // Google Apps Script 웹 앱 URL
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyQUV5Pm4W6Ocp06swFBZbXxHMqYfncR-emzegPJBQMjuos5LHecKB2fs1ELNvNa9M/exec';
@@ -111,7 +111,7 @@
     }
     .engine-badge {
       position: absolute; top: 8px; left: 8px; z-index: 17;
-      background: rgba(15, 23, 42, 0.78); color: #38bdf8;
+      background: rgba(15, 23, 42, 0.82); color: #38bdf8;
       padding: 4px 9px; border-radius: 12px; font-size: 11px; font-weight: 800;
       display: none; pointer-events: none;
       border: 1px solid rgba(56, 189, 248, 0.35);
@@ -405,6 +405,8 @@
     const LOCATION_REGEX = /^[0-9A-Z]+(-[0-9A-Z]+){2,3}$/i;
     const MAX_TIERS = 7;
     const QUEUE_STORAGE_KEY = 'wms_bg_sync_queue_v1';
+    const CAM_ID_KEY = 'wms_preferred_cam_id_v1';
+    const CAM_LABEL_KEY = 'wms_preferred_cam_label_v1';
 
     let activeEngine = null; // 'native' | 'html5'
     let nativeStream = null;
@@ -472,6 +474,20 @@
 
     function saveWorker() {
       localStorage.setItem('wms_worker_name', document.getElementById('workerName').value.trim());
+    }
+
+    function savePreferredCamera(deviceId, label) {
+      try {
+        if (deviceId) localStorage.setItem(CAM_ID_KEY, deviceId);
+        if (label) localStorage.setItem(CAM_LABEL_KEY, label);
+      } catch (e) {}
+    }
+
+    function clearPreferredCamera() {
+      try {
+        localStorage.removeItem(CAM_ID_KEY);
+        localStorage.removeItem(CAM_LABEL_KEY);
+      } catch (e) {}
     }
 
     function initAudio() {
@@ -582,7 +598,6 @@
             const res = await apiPost(task.payload);
             processedAny = true;
 
-            // 대기열에서 제거
             syncQueue = syncQueue.filter(t => t.id !== task.id);
             persistQueue();
 
@@ -601,7 +616,7 @@
             if (task.payload.action === 'add') {
               updateRecentState(task.id, 'err', '전송 실패');
             }
-            break; // 네트워크가 끊겼을 가능성이 높으므로 잠시 중단 후 재전송 버튼 표시
+            break;
           }
         }
       } finally {
@@ -611,7 +626,7 @@
 
         if (!hasPending && !hasFailed && processedAny) {
           updateSyncBar(true);
-          loadList(); // 대기열이 모두 비었을 때 서버 목록 1회만 최신화
+          loadList();
         } else {
           updateSyncBar(false);
           rebuildMergedData();
@@ -642,7 +657,6 @@
       }
     }
 
-    // 서버 데이터 + 아직 저장 중인 로컬 대기열을 합쳐 화면에 즉시 반영
     function rebuildMergedData() {
       const map = new Map();
       serverData.forEach(item => {
@@ -702,6 +716,115 @@
       renderList();
     }
 
+    // ================= 고화질 메인 카메라 자동 선택 및 기억 =================
+    async function enumerateRearCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videos = devices.filter(d => d.kind === 'videoinput');
+      const rears = videos.filter(d => !/front|user|전면|selfie/i.test(d.label || ''));
+      const filtered = rears.filter(d => !/depth|tof|infrared|\bir\b/i.test(d.label || ''));
+      if (filtered.length > 0) return filtered;
+      if (rears.length > 0) return rears;
+      return videos;
+    }
+
+    function scoreCameraDevice(dev) {
+      let score = 0;
+      const label = (dev.label || '').toLowerCase();
+
+      try {
+        if (typeof dev.getCapabilities === 'function') {
+          const caps = dev.getCapabilities();
+          if (caps) {
+            if (Array.isArray(caps.facingMode)) {
+              if (caps.facingMode.includes('environment')) score += 100;
+              if (caps.facingMode.includes('user')) score -= 500;
+            }
+            const maxW = (caps.width && caps.width.max) ? caps.width.max : 0;
+            const maxH = (caps.height && caps.height.max) ? caps.height.max : 0;
+            if (maxW > 0 && maxH > 0) {
+              score += Math.min((maxW * maxH) / 50000, 300);
+            }
+            if (caps.torch) score += 45;
+            if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) score += 55;
+          }
+        }
+      } catch (e) {}
+
+      if (/back|rear|후면|environment/.test(label)) score += 30;
+      if (/front|user|전면/.test(label)) score -= 500;
+      if (/ultra|0\.5|0\.6|macro|depth|tof|접사|초광각/.test(label)) score -= 70;
+      if (/tele|periscope|망원/.test(label)) score -= 35;
+      if (/main|primary|standard|기본/.test(label)) score += 35;
+
+      return score;
+    }
+
+    function findSavedOrBestCamera(rears) {
+      if (!rears || rears.length === 0) return null;
+
+      // 1순위: 사용자가 이전에 선택해 저장된 렌즈
+      const savedId = localStorage.getItem(CAM_ID_KEY);
+      const savedLabel = localStorage.getItem(CAM_LABEL_KEY);
+      if (savedId) {
+        const byId = rears.find(c => c.deviceId === savedId);
+        if (byId) return { device: byId, source: 'saved' };
+      }
+      if (savedLabel) {
+        const byLabel = rears.find(c => c.label && c.label === savedLabel);
+        if (byLabel) return { device: byLabel, source: 'saved' };
+      }
+
+      // 2순위: 해상도·자동초점·플래시 기준 최고 성능 후면 카메라 자동 선별
+      let best = rears[0];
+      let bestScore = scoreCameraDevice(rears[0]);
+      let minScore = bestScore;
+
+      for (let i = 1; i < rears.length; i++) {
+        const s = scoreCameraDevice(rears[i]);
+        if (s > bestScore) {
+          bestScore = s;
+          best = rears[i];
+        }
+        if (s < minScore) minScore = s;
+      }
+
+      return { device: best, source: (bestScore > minScore ? 'auto-best' : 'default') };
+    }
+
+    async function openHighResStream(deviceId) {
+      const hiRes = deviceId
+        ? { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+
+      try {
+        return await navigator.mediaDevices.getUserMedia({ video: hiRes, audio: false });
+      } catch (e) {
+        const fallback = deviceId
+          ? { deviceId: { exact: deviceId } }
+          : { facingMode: 'environment' };
+        return await navigator.mediaDevices.getUserMedia({ video: fallback, audio: false });
+      }
+    }
+
+    function scoreOpenedTrack(track) {
+      if (!track) return 0;
+      let score = 0;
+      try {
+        const st = track.getSettings ? track.getSettings() : {};
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const w = st.width || (caps.width && caps.width.max) || 0;
+        const h = st.height || (caps.height && caps.height.max) || 0;
+        const maxW = (caps.width && caps.width.max) || w;
+        const maxH = (caps.height && caps.height.max) || h;
+
+        score += Math.min((w * h) / 40000, 150);
+        score += Math.min((maxW * maxH) / 50000, 300);
+        if (caps.torch) score += 45;
+        if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) score += 60;
+      } catch (e) {}
+      return score;
+    }
+
     // ================= 스캐너 엔진 =================
     async function supportsNative1D() {
       if (!('BarcodeDetector' in window)) return false;
@@ -740,7 +863,8 @@
       }
     }
 
-    async function startCamera(preferredDeviceId) {
+    async function startCamera(explicitDeviceId) {
+      clearError();
       const btn = document.getElementById('btnCamToggle');
       btn.disabled = true;
       btn.textContent = '카메라 여는 중...';
@@ -756,9 +880,9 @@
 
         const useNative = await supportsNative1D();
         if (useNative) {
-          await startNativeScanner(preferredDeviceId);
+          await startNativeScanner(explicitDeviceId);
         } else {
-          await startFallbackScanner();
+          await startFallbackScanner(explicitDeviceId);
         }
 
         isScanning = true;
@@ -777,37 +901,116 @@
       }
     }
 
-    async function startNativeScanner(preferredDeviceId) {
+    async function startNativeScanner(explicitDeviceId) {
       activeEngine = 'native';
       const video = document.getElementById('nativeVideo');
       document.getElementById('reader').style.display = 'none';
       video.style.display = 'block';
       document.getElementById('aimOverlay').style.display = 'flex';
 
-      const badge = document.getElementById('engineBadge');
-      badge.textContent = '⚡ 고속 HD 스캐너';
-      badge.style.display = 'block';
+      let targetDeviceId = explicitDeviceId || null;
+      let pickedSource = explicitDeviceId ? 'manual' : 'none';
 
-      const baseVideo = preferredDeviceId
-        ? { deviceId: { exact: preferredDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-        : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+      // 이미 카메라 권한이 있는 경우: 열기 전에 저장된 렌즈 또는 최고화질 렌즈를 먼저 선택
+      if (!targetDeviceId) {
+        try {
+          const preRears = await enumerateRearCameras();
+          const hasIds = preRears.some(c => c.deviceId);
+          if (hasIds) {
+            rearCameras = preRears;
+            const picked = findSavedOrBestCamera(preRears);
+            if (picked && picked.device && picked.device.deviceId) {
+              targetDeviceId = picked.device.deviceId;
+              pickedSource = picked.source;
+            }
+          }
+        } catch (e) {}
+      }
 
+      // 선택된 렌즈로 열기 (실패 시 기본 후면 카메라로 안전 폴백)
       try {
-        nativeStream = await navigator.mediaDevices.getUserMedia({ video: baseVideo, audio: false });
-      } catch (e) {
-        const fallbackVideo = preferredDeviceId
-          ? { deviceId: { exact: preferredDeviceId } }
-          : { facingMode: 'environment' };
-        nativeStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: false });
+        nativeStream = await openHighResStream(targetDeviceId);
+      } catch (openErr) {
+        if (pickedSource === 'saved') clearPreferredCamera();
+        if (explicitDeviceId) throw openErr;
+        nativeStream = await openHighResStream(null);
+      }
+
+      nativeTrack = nativeStream.getVideoTracks()[0];
+
+      // 권한 획득 후 전체 후면 카메라 목록 갱신
+      rearCameras = await enumerateRearCameras();
+      let activeId = (nativeTrack && nativeTrack.getSettings) ? nativeTrack.getSettings().deviceId : '';
+
+      // 처음 실행(권한 방금 허용됨)이거나 저장된 렌즈가 아직 없을 때, 더 나은 고화질 메인 카메라가 있는지 검사
+      if (!explicitDeviceId && rearCameras.length >= 2) {
+        const picked = findSavedOrBestCamera(rearCameras);
+        if (picked && picked.device && picked.device.deviceId && picked.device.deviceId !== activeId &&
+            (picked.source === 'saved' || picked.source === 'auto-best')) {
+          try {
+            const betterStream = await openHighResStream(picked.device.deviceId);
+            nativeStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+            nativeStream = betterStream;
+            nativeTrack = nativeStream.getVideoTracks()[0];
+            activeId = (nativeTrack && nativeTrack.getSettings) ? nativeTrack.getSettings().deviceId : '';
+          } catch (e) {}
+        } else if (!localStorage.getItem(CAM_ID_KEY)) {
+          // InputDeviceInfo에서 해상도 구분이 안 된 기기: 현재 카메라가 저화질(1280 미만)이거나 자동초점이 없으면 다른 후면 렌즈 중 최고화질 탐색
+          const curSettings = nativeTrack.getSettings ? nativeTrack.getSettings() : {};
+          const curCaps = nativeTrack.getCapabilities ? nativeTrack.getCapabilities() : {};
+          const curHasFocus = Array.isArray(curCaps.focusMode) && curCaps.focusMode.includes('continuous');
+          const curLowRes = (curSettings.width || 0) < 1280;
+
+          if (curLowRes || !curHasFocus) {
+            let bestStream = nativeStream;
+            let bestTrack = nativeTrack;
+            let bestScore = scoreOpenedTrack(nativeTrack);
+            let bestId = activeId;
+            let bestLabel = nativeTrack.label || '';
+
+            const candidates = rearCameras.filter(c => c.deviceId && c.deviceId !== activeId).slice(0, 3);
+            for (let i = 0; i < candidates.length; i++) {
+              try {
+                const testStream = await openHighResStream(candidates[i].deviceId);
+                const testTrack = testStream.getVideoTracks()[0];
+                const testScore = scoreOpenedTrack(testTrack);
+                if (testScore > bestScore + 15) {
+                  bestStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+                  bestStream = testStream;
+                  bestTrack = testTrack;
+                  bestScore = testScore;
+                  bestId = candidates[i].deviceId;
+                  bestLabel = candidates[i].label || testTrack.label || '';
+                } else {
+                  testStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+                }
+              } catch (e) {}
+            }
+
+            nativeStream = bestStream;
+            nativeTrack = bestTrack;
+            activeId = bestId;
+            if (bestId) savePreferredCamera(bestId, bestLabel);
+          }
+        }
       }
 
       video.srcObject = nativeStream;
       await video.play();
-      nativeTrack = nativeStream.getVideoTracks()[0];
+
+      const foundIdx = rearCameras.findIndex(c => c.deviceId === activeId);
+      if (foundIdx >= 0) currentCamIdx = foundIdx;
+      document.getElementById('btnSwitchCam').style.display = rearCameras.length >= 2 ? 'block' : 'none';
+
+      // 수동 전환 시 해당 렌즈를 기본 카메라로 영구 저장
+      if (explicitDeviceId && activeId) {
+        const matched = rearCameras.find(c => c.deviceId === activeId);
+        savePreferredCamera(activeId, (matched && matched.label) || nativeTrack.label || '');
+      }
 
       await applyContinuousFocus(nativeTrack);
-      await refreshRearCameraList(nativeTrack);
       await setupNativeControls(nativeTrack);
+      updateEngineBadgeWithTrack(nativeTrack);
 
       const supported = await window.BarcodeDetector.getSupportedFormats();
       const target1D = ['code_128', 'code_39', 'code_93', 'codabar', 'itf'].filter(f => supported.includes(f));
@@ -819,6 +1022,20 @@
       scheduleNativeScan();
     }
 
+    function updateEngineBadgeWithTrack(track) {
+      const badge = document.getElementById('engineBadge');
+      let resText = '고속 HD';
+      try {
+        const st = track && track.getSettings ? track.getSettings() : {};
+        if (st.width && st.height) {
+          resText = `HD ${st.width}×${st.height}`;
+        }
+      } catch (e) {}
+      const lensText = rearCameras.length >= 2 ? ` · 렌즈 ${currentCamIdx + 1}/${rearCameras.length}` : '';
+      badge.textContent = `⚡ ${resText}${lensText}`;
+      badge.style.display = 'block';
+    }
+
     async function applyContinuousFocus(track) {
       try {
         if (!track || !track.getCapabilities) return;
@@ -826,21 +1043,6 @@
         if (caps.focusMode && caps.focusMode.includes('continuous')) {
           await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
         }
-      } catch (e) {}
-    }
-
-    async function refreshRearCameraList(activeTrack) {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videos = devices.filter(d => d.kind === 'videoinput');
-        const rears = videos.filter(d => !/front|user|전면/i.test(d.label));
-        rearCameras = rears.length >= 2 ? rears : videos;
-
-        const activeId = activeTrack && activeTrack.getSettings ? activeTrack.getSettings().deviceId : '';
-        const foundIdx = rearCameras.findIndex(c => c.deviceId === activeId);
-        if (foundIdx >= 0) currentCamIdx = foundIdx;
-
-        document.getElementById('btnSwitchCam').style.display = rearCameras.length >= 2 ? 'block' : 'none';
       } catch (e) {}
     }
 
@@ -949,17 +1151,13 @@
       }
     }
 
-    async function startFallbackScanner() {
+    async function startFallbackScanner(explicitDeviceId) {
       activeEngine = 'html5';
       await ensureScannerLibrary();
 
       document.getElementById('nativeVideo').style.display = 'none';
       document.getElementById('aimOverlay').style.display = 'none';
       document.getElementById('reader').style.display = 'block';
-
-      const badge = document.getElementById('engineBadge');
-      badge.textContent = '📷 HD 스캐너';
-      badge.style.display = 'block';
 
       if (!html5QrCode) {
         html5QrCode = new Html5Qrcode('reader', {
@@ -983,20 +1181,50 @@
           return { width: w, height: h };
         },
         videoConstraints: {
-          facingMode: 'environment',
           width: { ideal: 1920 },
           height: { ideal: 1080 }
         }
       };
 
+      let targetId = explicitDeviceId || null;
       try {
-        await html5QrCode.start({ facingMode: 'environment' }, config, onFallbackScanSuccess, () => {});
-      } catch (firstErr) {
-        const cameras = await Html5Qrcode.getCameras();
-        if (!cameras || cameras.length === 0) throw firstErr;
-        const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
-        await html5QrCode.start(backCam.id, config, onFallbackScanSuccess, () => {});
+        const cams = await Html5Qrcode.getCameras();
+        if (cams && cams.length > 0) {
+          const rears = cams.filter(c => !/front|user|전면|selfie/i.test(c.label || ''));
+          rearCameras = (rears.length > 0 ? rears : cams).map(c => ({ deviceId: c.id, label: c.label || '' }));
+          if (!targetId) {
+            const picked = findSavedOrBestCamera(rearCameras);
+            if (picked && picked.device) targetId = picked.device.deviceId;
+          }
+        }
+      } catch (e) {}
+
+      let started = false;
+      if (targetId) {
+        try {
+          await html5QrCode.start(targetId, config, onFallbackScanSuccess, () => {});
+          started = true;
+          const idx = rearCameras.findIndex(c => c.deviceId === targetId);
+          if (idx >= 0) currentCamIdx = idx;
+          if (explicitDeviceId) {
+            const matched = rearCameras.find(c => c.deviceId === targetId);
+            savePreferredCamera(targetId, (matched && matched.label) || '');
+          }
+        } catch (e) {
+          if (!explicitDeviceId) clearPreferredCamera();
+        }
       }
+
+      if (!started) {
+        config.videoConstraints.facingMode = 'environment';
+        await html5QrCode.start({ facingMode: 'environment' }, config, onFallbackScanSuccess, () => {});
+      }
+
+      document.getElementById('btnSwitchCam').style.display = rearCameras.length >= 2 ? 'block' : 'none';
+      const badge = document.getElementById('engineBadge');
+      const lensText = rearCameras.length >= 2 ? ` · 렌즈 ${currentCamIdx + 1}/${rearCameras.length}` : '';
+      badge.textContent = `📷 HD 스캐너${lensText}`;
+      badge.style.display = 'block';
 
       setupFallbackControls();
     }
@@ -1101,11 +1329,29 @@
 
     async function switchRearLens() {
       if (rearCameras.length < 2) return;
-      currentCamIdx = (currentCamIdx + 1) % rearCameras.length;
-      const nextCam = rearCameras[currentCamIdx];
-      await stopCamera();
-      await startCamera(nextCam.deviceId);
-      showToast(`렌즈 전환 (${currentCamIdx + 1}/${rearCameras.length})`);
+      const total = rearCameras.length;
+      const startIdx = currentCamIdx;
+
+      for (let step = 1; step <= total; step++) {
+        const nextIdx = (startIdx + step) % total;
+        const nextCam = rearCameras[nextIdx];
+        await stopCamera();
+        try {
+          await startCamera(nextCam.deviceId);
+          if (isScanning) {
+            currentCamIdx = nextIdx;
+            savePreferredCamera(nextCam.deviceId, nextCam.label || '');
+            let resInfo = '';
+            if (nativeTrack && nativeTrack.getSettings) {
+              const st = nativeTrack.getSettings();
+              if (st.width && st.height) resInfo = ` · ${st.width}×${st.height}`;
+            }
+            showToast(`⭐ 기본 렌즈 저장됨 (${nextIdx + 1}/${total}${resInfo})`);
+            return;
+          }
+        } catch (e) {}
+      }
+      showToast('사용 가능한 다른 렌즈가 없습니다.');
     }
 
     async function triggerRefocus() {
@@ -1189,7 +1435,6 @@
 
     function closeModal() {
       document.getElementById('confirmModal').classList.remove('open');
-      // 0.4초 쿨다운 후 바로 다음 바코드 스캔 가능
       setTimeout(() => {
         isModalOpen = false;
         if (isScanning) updateHud('빨간 가로선에 바코드 1개를 맞추세요 (15~25cm 거리 권장)');
@@ -1220,7 +1465,6 @@
       const finalCode = document.getElementById('modalCodeInput').value.trim().toUpperCase();
       if (!finalCode) { showToast('로케이션 코드를 입력해 주세요.'); return; }
 
-      // 로컬 목록에서 즉시 중복 체크 (0.01초 컷)
       const existsLocal = allData.some(item => item.code.toUpperCase() === finalCode);
       if (existsLocal) {
         showToast(`이미 등록된 자리입니다 (${finalCode})`);
@@ -1234,18 +1478,15 @@
 
       const taskId = 't_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
 
-      // 1. 최근 등록 목록에 즉시 표시
       recentItems.unshift({ id: taskId, code: finalCode, state: 'saving', msg: '저장중' });
       if (recentItems.length > 6) recentItems.pop();
       renderRecent();
 
-      // 2. 입력창 초기화 및 모달 0초 즉시 닫기!
       document.getElementById('manualCode').value = '';
       playBeep(1600, 0.06);
       showToast(`⚡ ${finalCode} 등록! 바로 다음 스캔 가능`);
       closeModal();
 
-      // 3. 백그라운드 대기열에 넣어 구글 시트로 순차 전송
       enqueueTask({
         id: taskId,
         status: 'pending',
@@ -1286,7 +1527,6 @@
     }
 
     function undoRecent(taskId, code) {
-      // 아직 서버로 안 나간 대기 중 항목이면 대기열에서 즉시 삭제
       const pendingIdx = syncQueue.findIndex(t => t.id === taskId && t.status === 'pending');
       if (pendingIdx >= 0) {
         syncQueue.splice(pendingIdx, 1);
@@ -1299,7 +1539,6 @@
         return;
       }
 
-      // 이미 전송 중이거나 전송 완료된 항목은 백그라운드 취소 요청
       recentItems = recentItems.filter(r => r.id !== taskId);
       renderRecent();
       showToast(`${code} 취소 처리 중...`);
@@ -1452,7 +1691,7 @@
       t.textContent = msg;
       t.classList.add('show');
       clearTimeout(window._toastTimer);
-      window._toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+      window._toastTimer = setTimeout(() => t.classList.remove('show'), 2300);
     }
   </script>
 </body>
